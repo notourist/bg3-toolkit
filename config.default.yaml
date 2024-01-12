@@ -1,0 +1,9 @@
+---
+raw_data_path: ""
+spark:
+  jdbc_driver_path: "./postgresql-42.7.1.jar"
+db:
+  user: postgres
+  password: postgres
+  database: postgres
+  schema: public

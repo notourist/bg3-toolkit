@@ -1,0 +1,24 @@
+[tool.poetry]
+name = "bg3"
+version = "0.1.0"
+description = ""
+authors = ["Zoe Martin <git@zoemartin.me>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+numpy = "^1.26.2"
+pandas = "^2.1.4"
+pyarrow = "^14.0.2"
+pyspark = "^3.5.0"
+click = "^8.1.7"
+pyyaml = "^6.0.1"
+xmltodict = "^0.13.0"
+
+[tool.poetry.scripts]
+bg3-tools = { reference = "bg3.main:main", type = "console" }
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
