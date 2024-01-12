@@ -36,11 +36,126 @@ def main(config: str):
     sc = spark.sparkContext
 
 
-@main.command()
+@main.group()
+def search():
+    pass
+
+
+@search.command()
+def shell():
+    import readline  # noqa
+
+    translations = spark.read.jdbc(
+        url=cfg.db.url,
+        table="translations",
+    )
+
+    root_templates = spark.read.jdbc(
+        url=cfg.db.url,
+        table="root_templates",
+    )
+
+    weapons = spark.read.jdbc(
+        url=cfg.db.url,
+        table="resolved_weapons",
+    )
+
+    armor = spark.read.jdbc(
+        url=cfg.db.url,
+        table="resolved_armor",
+    )
+
+    translations.registerTempTable("translations")
+    root_templates.registerTempTable("root_templates")
+    weapons.registerTempTable("resolved_weapons")
+    armor.registerTempTable("resolved_armor")
+
+    armor.join(
+        root_templates.withColumnRenamed("Name", "templ_name"),
+        F.col("templ_name") == armor.name,
+    ).join(
+        translations, translations.contentuid == root_templates.DisplayName, "left"
+    ).registerTempTable(
+        "armor"
+    )
+
+    weapons.join(
+        root_templates.withColumnRenamed("Name", "templ_name"),
+        F.col("templ_name") == weapons.name,
+    ).join(
+        translations, translations.contentuid == root_templates.DisplayName, "left"
+    ).registerTempTable(
+        "weapons"
+    )
+
+    def completer(text, state):
+        options = (
+            [
+                t[0]
+                for t in spark.sql("show tables").select("tableName").collect()
+                if t[0].startswith(text)
+            ]
+            + [c for c in armor.columns if c.startswith(text)]
+            + [c for c in weapons.columns if c.startswith(text)]
+        )
+        try:
+            return f'"{options[state]}" ' if " " in options[state] else options[state]
+        except IndexError:
+            return None
+
+    readline.parse_and_bind("tab: menu-complete")
+    readline.set_completer(completer)
+
+    quit = False
+    while not quit:
+        inpt = input(">>> ").strip()
+        if inpt == "exit":
+            quit = True
+            continue
+
+        show_count_match = re.search(r"/(?:s|show) (\d+|all)", inpt)
+        show_count = (
+            (
+                -1
+                if show_count_match.group(1) == "all"
+                else int(show_count_match.group(1))
+            )
+            if show_count_match
+            else 10
+        )
+        inpt = re.sub(r"/(s|show) (\d+|all)", "", inpt)
+
+        vertical_match = re.search(r"(/vertical)|(/v)", inpt)
+        vertical = vertical_match is not None
+
+        inpt = re.sub(r"(/vertical)|(/v)", "", inpt)
+
+        truncate_match = re.search(r"(/truncate)|(/t)", inpt)
+        truncate = truncate_match is not None
+        inpt = re.sub(r"(/truncate)|(/t)", "", inpt)
+
+        drop_null_match = re.search(r"(/dropnull)|(/d)", inpt)
+        drop_null = drop_null_match is not None
+        inpt = re.sub(r"(/dropnull)|(/d)", "", inpt)
+
+        try:
+            df = spark.sql(inpt)
+            if drop_null:
+                df = spark.createDataFrame(df.toPandas().dropna(axis=1))
+            df.show(
+                df.count() if show_count == -1 else show_count,
+                vertical=vertical,
+                truncate=truncate,
+            )
+        except Exception as e:
+            print(f"Error: {e}")
+
+
+@search.command()
 @click.argument("display_name", required=True)
 @click.option("-c", "--column", multiple=True, required=False)
 @click.option("-h", "--honour", is_flag=True)
-def search(display_name: str, column: tuple[str], honour: bool = False):
+def item(display_name: str, column: tuple[str], honour: bool = False):
     translations = spark.read.jdbc(
         url=cfg.db.url,
         table="translations",
