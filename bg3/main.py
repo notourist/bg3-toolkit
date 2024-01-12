@@ -39,7 +39,8 @@ def main(config: str):
 @main.command()
 @click.argument("display_name", required=True)
 @click.option("-c", "--column", multiple=True, required=False)
-def search(display_name: str, column: tuple[str]):
+@click.option("-h", "--honour", is_flag=True)
+def search(display_name: str, column: tuple[str], honour: bool = False):
     translations = spark.read.jdbc(
         url=cfg.db.url,
         table="translations",
@@ -48,41 +49,53 @@ def search(display_name: str, column: tuple[str]):
     root_templates = spark.read.jdbc(
         url=cfg.db.url,
         table="root_templates",
-    )
+    ).withColumnRenamed("Name", "templ_name")
 
     weapons = spark.read.jdbc(
         url=cfg.db.url,
         table="resolved_weapons",
-    )
+    ).filter(F.col("honour_mode") == honour)
 
     weapons = weapons.join(
         root_templates,
-        root_templates.Name == weapons.name,
-    ).join(translations, translations.contentuid == root_templates.DisplayName)
+        root_templates.templ_name == weapons.name,
+    ).join(translations, translations.contentuid == root_templates.DisplayName, "left")
 
     armor = spark.read.jdbc(
         url=cfg.db.url,
         table="resolved_armor",
+    ).filter(F.col("honour_mode") == honour)
+
+    armor = armor.join(root_templates, root_templates.templ_name == armor.name).join(
+        translations, translations.contentuid == root_templates.DisplayName, "left"
     )
 
-    armor = armor.join(root_templates, root_templates.Name == armor.name).join(
-        translations, translations.contentuid == root_templates.DisplayName
-    )
+    found_weapons = weapons.filter(F.col("text").ilike(f"%{display_name}%"))
+    found_armor = armor.filter(F.col("text").ilike(f"%{display_name}%"))
 
-    item = (
-        weapons.filter(F.col("text").contains(display_name)).first()
-        or armor.filter(F.col("text").contains(display_name)).first()
-    )
+    found_count = found_weapons.count() + found_armor.count()
 
-    if item is None:
+    if found_count == 0:
         raise click.ClickException(f"Item with name {display_name} not found.")
 
-    df = spark.createDataFrame(item.asDict().items(), schema=["key", "value"]).filter(
-        F.col("value").isNotNull()
-    )
+    click.echo(f"Found {found_count} items.")
 
-    if len(column) > 0:
-        df = df.filter(F.lower(F.col("key")).isin([c.lower() for c in column]))
+    if found_count == 1:
+        item = found_weapons.first() or found_armor.first()
+        df = spark.createDataFrame(
+            item.asDict().items(), schema=["key", "value"]
+        ).filter(F.col("value").isNotNull())
+
+        if len(column) > 0:
+            df = df.filter(F.lower(F.col("key")).isin([c.lower() for c in column]))
+    else:
+        df = found_weapons.select(
+            F.col("text").alias("name"),
+        ).union(
+            found_armor.select(
+                F.col("text").alias("name"),
+            )
+        )
 
     df.show(df.count(), False)
 
