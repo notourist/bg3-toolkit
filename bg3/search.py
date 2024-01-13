@@ -54,22 +54,18 @@ def shell():
     armor.registerTempTable("resolved_armor")
 
     armor.join(
-        root_templates.withColumnRenamed("Name", "templ_name"),
-        F.col("Stats") == armor.name,
+        root_templates,
+        root_templates.Stats == armor.name,
     ).join(
         translations, translations.contentuid == root_templates.DisplayName, "left"
-    ).registerTempTable(
-        "armor"
-    )
+    ).registerTempTable("armor")
 
     weapons.join(
-        root_templates.withColumnRenamed("Name", "templ_name"),
-        F.col("Stats") == weapons.name,
+        root_templates,
+        root_templates.Stats == weapons.name,
     ).join(
         translations, translations.contentuid == root_templates.DisplayName, "left"
-    ).registerTempTable(
-        "weapons"
-    )
+    ).registerTempTable("weapons")
 
     def completer(text, state):
         options = (
@@ -159,7 +155,7 @@ def item(
     root_templates = spark.read.jdbc(
         url=cfg.db.url,
         table="root_templates",
-    ).withColumnRenamed("Name", "templ_name")
+    )
 
     weapons = spark.read.jdbc(
         url=cfg.db.url,
