@@ -2,6 +2,10 @@ import os
 import re
 import xml.etree.ElementTree as ET  # noqa
 from typing import Optional
+import tempfile
+import shutil
+import xmltodict
+import json
 
 import click
 from pyspark import SparkContext
@@ -29,26 +33,32 @@ def import_(ctx):
 
 
 @import_.command()
-def root_templates():
-    def find_files(path: str):
+@click.option(
+    "-r",
+    "--root-templates",
+    is_flag=True,
+)
+@click.option("-c", "--classes", is_flag=True)
+def lsx(root_templates: bool, classes: bool):
+    table_names = []
+
+    if root_templates:
+        table_names.append("root_templates")
+    if classes:
+        table_names.append("classes")
+
+    if not table_names:
+        click.ClickException("No data to import.")
+
+    def find_files(path: str, table_name: str):
         for root, dirs, files in os.walk(path):
             for file in files:
-                if "RootTemplates" in root:
+                if table_name == "root_templates" and "RootTemplates" in root:
+                    yield os.path.join(root, file)
+                if table_name == "classes" and "ClassDescriptions" in root:
                     yield os.path.join(root, file)
 
-    import tempfile
-    import shutil
-    import xmltodict
-    import json
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-        files = []
-        counter = 0
-        for file in find_files(cfg.raw_data_path):
-            shutil.copy(file, os.path.join(tmpdir, f"{counter}.xml"))
-            files.append(os.path.join(tmpdir, f"{counter}.xml"))
-            counter += 1
-
+    def parse(table_name: str, files: list[str]):
         rdd = (
             sc.wholeTextFiles(",".join(files))
             .map(lambda x: x[1])
@@ -62,7 +72,8 @@ def root_templates():
             df.select(df.save.region.node.children.node.alias("node"))
             .select(F.explode("node").alias("node"))
             .select(
-                F.expr("uuid()").alias("id"), F.col("node.attribute").alias("attribute")
+                F.expr("uuid()").alias("id"),
+                F.col("node.attribute").alias("attribute"),
             )
             .select(F.col("id"), F.explode("attribute").alias("attribute"))
             .select(F.col("id"), F.col("attribute.*"))
@@ -81,9 +92,23 @@ def root_templates():
 
         df.write.jdbc(
             url=cfg.db.url,
-            table="root_templates",
+            table=table_name,
             mode="overwrite",
         )
+
+    for table_name in table_names:
+        files = list(find_files(cfg.raw_data_path, table_name))
+        if any(filter(lambda x: x.split("/")[-1].startswith("_"), files)):
+            with tempfile.TemporaryDirectory() as tmpdir:
+                new_files = []
+                counter = 0
+                for file in files:
+                    shutil.copy(file, os.path.join(tmpdir, f"{counter}.xml"))
+                    new_files.append(os.path.join(tmpdir, f"{counter}.xml"))
+                    counter += 1
+                parse(table_name, new_files)
+        else:
+            parse(table_name, files)
 
 
 @import_.command()
